@@ -1,143 +1,173 @@
 # Setura Employee Management
 
-Lightweight HR, attendance and leave management for small teams (~20 employees).
+Lightweight HR, attendance and leave management for small teams.
 
-## Stack
+Two applications in one repository, talking over REST:
 
-| Concern        | Choice                                          |
-| -------------- | ----------------------------------------------- |
-| Framework      | Next.js 15 (App Router), React 19, TypeScript    |
-| Styling        | Tailwind CSS v4 (CSS-first config, no JS config) |
-| UI             | Setura Base UI — our own components, no library  |
-| Database       | Neon PostgreSQL via Drizzle ORM                  |
-| Auth           | Better Auth (cookie sessions, email + password)  |
-| Tables         | TanStack Table (logic only — markup is ours)     |
-| Client state   | TanStack Query (interactive screens only)        |
-| Validation     | Zod                                             |
-| Dates          | date-fns                                        |
-| File storage   | Cloudflare R2 (abstraction only, so far)         |
+```
+frontend/                          backend/
+  Next.js 15                         FastAPI
+  TypeScript, Tailwind               Python 3.12, Pydantic v2
+  TanStack Query + Table             SQLAlchemy 2 + Alembic
+        │                                  │
+        └──────── HTTP / JSON ─────────────┘
+                                           │
+                                    Neon PostgreSQL
+```
 
-## Getting started
+The frontend never touches the database. Every read and write goes through
+`frontend/src/lib/api/`, and the backend owns the schema, authentication,
+authorization and all business logic.
+
+## Ownership
+
+| Directory   | Owner   | Scope                                                        |
+| ----------- | ------- | ------------------------------------------------------------ |
+| `frontend/` | Himanshu | UI, client state, API client, presentation                   |
+| `backend/`  | Sakshi  | API, database, auth, authorization, business logic, storage  |
+
+The REST API is the contract between the two.
+
+## Running locally
+
+Two terminals.
+
+**Backend** — http://localhost:8000
 
 ```bash
+cd backend
+python3.12 -m venv .venv
+source .venv/bin/activate          # Windows: .venv\Scripts\activate
+pip install -e ".[dev]"
+cp .env.example .env               # Windows: copy .env.example .env
+uvicorn app.main:app --reload
+```
+
+**Frontend** — http://localhost:3000
+
+```bash
+cd frontend
 npm install
-cp .env.example .env       # then fill in DATABASE_URL and BETTER_AUTH_SECRET
-npm run db:push            # create the tables
-npm run db:seed            # optional: 5 departments, 4 leave types, 20 employees
+cp .env.example .env.local         # Windows: copy .env.example .env.local
 npm run dev
 ```
 
-The app runs at http://localhost:3000. Without a `.env` it still starts and
-shows a setup screen rather than crashing.
+| URL                              | What                                    |
+| -------------------------------- | --------------------------------------- |
+| http://localhost:3000            | The application                         |
+| http://localhost:8000/health     | Liveness check                          |
+| http://localhost:8000/docs       | Interactive API documentation (Swagger) |
+| http://localhost:8000/redoc      | The same schema, ReDoc                  |
+| http://localhost:8000/openapi.json | The OpenAPI schema                    |
 
-`npm run db:seed` does not create logins — passwords must be hashed by Better
-Auth. Create the first account through the sign-up API, then promote it:
+FastAPI generates `/docs`, `/redoc` and `/openapi.json` from the route
+signatures, so there is no separate API documentation to keep in sync. No
+business endpoints exist yet — `/health` is the only route.
 
-```sql
-UPDATE "user" SET role = 'SUPER_ADMIN' WHERE email = 'you@seturasolutions.com';
-```
+## Working without the other half
 
-## Scripts
+Each side runs standalone.
 
-| Script                | What it does                                  |
-| --------------------- | --------------------------------------------- |
-| `npm run dev`         | Development server                            |
-| `npm run build`       | Production build                              |
-| `npm run start`       | Serve the production build                    |
-| `npm run typecheck`   | `tsc --noEmit`                                |
-| `npm run lint`        | ESLint                                        |
-| `npm run verify`      | typecheck + lint + build                      |
-| `npm run db:generate` | Generate SQL migrations from the schema       |
-| `npm run db:migrate`  | Apply migrations                              |
-| `npm run db:push`     | Push the schema directly (development only)   |
-| `npm run db:studio`   | Drizzle Studio                                |
-| `npm run db:seed`     | Load development sample data                  |
+The frontend ships an in-memory fixture behind `NEXT_PUBLIC_USE_MOCK_API=true`
+(the default in `frontend/.env.example`), so the UI runs with no backend at
+all. Set it to `false` once the API is available.
 
-## Architecture
+The backend starts, serves `/health` and renders `/docs` with an empty `.env` —
+nothing requires a database until something actually queries one.
 
-```
-Next.js page (Server Component)
-        ↓
-Service layer  ──  business logic + Zod validation
-        ↓
-Drizzle ORM
-        ↓
-Neon PostgreSQL
-```
+## Environment
 
-Interactive screens add one hop:
+Two separate files; neither is committed.
 
-```
-Client Component → TanStack Query → Route Handler → Service → Drizzle
-```
+| File                    | Contains                                                   |
+| ----------------------- | ---------------------------------------------------------- |
+| `frontend/.env.example` | `NEXT_PUBLIC_API_URL`, `NEXT_PUBLIC_USE_MOCK_API` — public  |
+| `backend/.env.example`  | `DATABASE_URL`, `SECRET_KEY`, `CORS_ORIGINS`, R2 keys       |
 
-Rules that keep this from drifting:
+Everything in the frontend file is inlined into the browser bundle by
+construction. **No secret ever belongs there** — credentials live only in
+`backend/.env`.
 
-- **Business logic lives in `src/services/`.** Pages compose; they do not query.
-- **Server Components by default.** `"use client"` only where there is real
-  interactivity (the employees table, the mobile nav, the login form).
-- **Every service re-validates its input** with the Zod schema, so a Route
-  Handler, a Server Action and a seed script all get the same guarantees.
-- **Secrets never leave the server.** No `NEXT_PUBLIC_` variable exists; `src/db`,
-  `src/lib/auth/auth.ts` and `src/lib/storage` are server-only.
+`CORS_ORIGINS` must list the frontend's origin (`http://localhost:3000` in
+development), or the browser blocks every request.
+
+## Commands
+
+**Frontend** (from `frontend/`)
+
+| Command             | What it does             |
+| ------------------- | ------------------------ |
+| `npm run dev`       | Development server       |
+| `npm run build`     | Production build         |
+| `npm run typecheck` | `tsc --noEmit`           |
+| `npm run lint`      | ESLint                   |
+| `npm run verify`    | typecheck + lint + build |
+
+**Backend** (from `backend/`, venv activated)
+
+| Command                          | What it does                    |
+| -------------------------------- | ------------------------------- |
+| `uvicorn app.main:app --reload`  | Development server              |
+| `pytest`                         | Tests                           |
+| `ruff check .`                   | Lint                            |
+| `ruff format .`                  | Format                          |
+| `alembic revision --autogenerate -m "…"` | Generate a migration    |
+| `alembic upgrade head`           | Apply migrations                |
+
+See `backend/alembic/README.md` for the migration workflow.
 
 ## Layout
 
 ```
-src/
-├── app/
-│   ├── (auth)/            login, forgot-password
-│   ├── (dashboard)/       dashboard, employees  (+ layout, error, loading)
-│   └── api/               auth/[...all], employees
-├── components/
-│   ├── base/              Setura Base UI (button, input, select, card,
-│   │                      badge, table, pagination, spinner)
-│   ├── layout/            sidebar, header, mobile-nav
-│   └── features/          employees, dashboard
-├── db/
-│   ├── schema/            one file per domain + relations.ts
-│   ├── migrations/        generated SQL
-│   ├── index.ts           Drizzle client
-│   └── seed.ts
-├── services/              employee, department, attendance, leave
-├── lib/
-│   ├── auth/              auth.ts, auth-client.ts, session.ts
-│   ├── permissions/       roles.ts, permissions.ts, authorize.ts
-│   ├── storage/           r2.ts, index.ts
-│   └── validations/       auth, employee, attendance, leave
-├── hooks/
-├── types/
-└── utils/
+setura-employee-management/
+├── frontend/
+│   └── src/
+│       ├── app/            App Router — (auth) and (dashboard) groups
+│       ├── components/     base/ (Setura UI), layout/, features/
+│       ├── lib/            api/, query/, permissions/, validations/
+│       ├── hooks/          feature-scoped TanStack Query hooks
+│       ├── types/          API contract — currently provisional
+│       └── utils/
+│
+├── backend/
+│   ├── app/
+│   │   ├── main.py         FastAPI app, CORS, /health
+│   │   ├── core/           config, security, dependencies
+│   │   ├── db/             declarative Base, session factory
+│   │   ├── api/            versioned router + routes/
+│   │   ├── models/         SQLAlchemy models      (empty)
+│   │   ├── schemas/        Pydantic schemas       (empty)
+│   │   ├── services/       business logic         (empty)
+│   │   ├── repositories/   optional query helpers (empty)
+│   │   └── utils/
+│   ├── alembic/            migrations
+│   └── tests/
+│
+└── README.md
 ```
 
-## Base UI
+## API contract
 
-Our own components, built on React + TypeScript + Tailwind and native browser
-behaviour. Every component takes a small, predictable set of props:
+The backend is a scaffold; no endpoint beyond `/health` exists yet. The
+frontend has had to assume request and response shapes in the meantime, and
+every assumption is marked:
 
-```tsx
-<Button variant="primary">Add employee</Button>
-<Button variant="danger" size="sm">Delete</Button>
-<Button loading>Saving…</Button>
+```bash
+grep -rn "CONTRACT:" frontend/src
 ```
 
-Variants: `primary`, `secondary`, `outline`, `ghost`, `danger`.
-Sizes: `sm`, `md`, `lg`.
+Those notes name what needs confirming — the pagination envelope's field
+names, snake_case versus camelCase, the error body shape, and how the login
+response returns a session. Worth reading before finalising the Pydantic
+schemas, so the two sides meet in the middle rather than one adapting to the
+other after the fact.
 
-Only the components the first two screens need are implemented. Add more by
-following the same shape: a folder under `src/components/base/`, a lookup map
-for variants, forwarded refs, and no external dependency.
+## Status
 
-## Roles
+Frontend: application shell, dashboard and employees table are built and run
+against the fixture. Backend: scaffold only — structure, configuration, CORS,
+health endpoint and tests, with no business logic.
 
-`SUPER_ADMIN` → `HR_ADMIN` → `MANAGER` → `EMPLOYEE`
-
-Permissions are a flat `resource:action` list in `src/lib/permissions/permissions.ts`.
-Hiding a nav link is presentation; every route and service enforces its own
-check via `authorize()`.
-
-## Not built yet
-
-Payroll, performance, recruitment, reporting, notifications, email, multi-tenancy,
-analytics, mobile, real-time. Attendance, leave, departments and settings have
-navigation entries but no screens yet.
+Not built: payroll, performance, recruitment, reporting, notifications,
+documents. Attendance, leave, departments and settings have navigation entries
+and placeholder screens.

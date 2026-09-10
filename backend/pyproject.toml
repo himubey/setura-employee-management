@@ -1,0 +1,67 @@
+[project]
+name = "setura-backend"
+version = "0.1.0"
+description = "Setura Employee Management — FastAPI backend"
+requires-python = ">=3.12"
+
+# Kept deliberately short. Everything here is load-bearing for the scaffold;
+# add a dependency when a feature needs it, not in anticipation.
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "pydantic>=2.9",
+    "pydantic-settings>=2.6",
+    "sqlalchemy>=2.0",
+    "alembic>=1.14",
+    # psycopg 3. `[binary]` ships prebuilt wheels, so there is no libpq build
+    # step on a developer machine. Use plain `psycopg[c]` or `psycopg` in a
+    # container image where a compiler is available.
+    "psycopg[binary]>=3.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.3",
+    "httpx>=0.28",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+# ---------------------------------------------------------------------------
+# Ruff — linter and formatter, replacing black + isort + flake8.
+# ---------------------------------------------------------------------------
+[tool.ruff]
+target-version = "py312"
+line-length = 88
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "I",   # isort — import ordering
+    "UP",  # pyupgrade — modern syntax for the target version
+    "B",   # flake8-bugbear — likely bugs
+    "SIM", # flake8-simplify
+]
+
+[tool.ruff.lint.isort]
+# Without this, the `alembic/` directory at the project root makes Ruff treat
+# the `alembic` package as first-party and group it with `app`.
+known-first-party = ["app"]
+known-third-party = ["alembic"]
+
+[tool.ruff.lint.per-file-ignores]
+# Alembic generates these; they are not hand-written style.
+"alembic/versions/*" = ["E501"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Makes `app` importable without installing, so `pytest` works straight after
+# a clone even if `pip install -e .` has not been run yet.
+pythonpath = ["."]
